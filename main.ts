@@ -8,6 +8,11 @@
 // your own open-world crime game in its place (three.js or any library you vendor under game/),
 // put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
 //
+// SOLMARINA (built by the recorded agent session for gta6-01): the starter's Block Dodger is gone.
+// game/ is now a top-down open-world crime game — an original sun-soaked city, traffic and
+// pedestrians, car theft, a 5-star wanted system with police chases, 6 story missions, combat,
+// a HUD with minimap, start screen and localStorage saves. See game/src/main.js.
+//
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
