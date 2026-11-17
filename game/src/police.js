@@ -1,10 +1,14 @@
 // police.js — the Solmarina PD and the wanted system. Crimes raise the
-// wanted level (1–5 stars); cruisers chase and ram, officers on foot chase
-// and punch. Lose the heat by staying out of sight, hiding, or paying for a
-// respray at the Sunset Spray Shop. At 5 stars the whole city is after you.
+// wanted level (1–5 stars); cruisers chase and nudge, officers on foot
+// chase and punch. Lose the heat by staying out of sight, hiding, or paying
+// for a respray at the Sunset Spray Shop. At 4 stars and up the PD sends a
+// helicopter after you. The rams are deliberately soft now: a cruiser taps
+// your car and shoves it instead of shredding it, so a new player gets a
+// chance to learn the chase before getting busted.
 
 import { clamp, dist, turnToward, mulberry32 } from './utils.js';
 import { Car, CAR_TYPES } from './vehicles.js';
+import { Heli, updatePoliceHeli } from './heli.js';
 import { WORLD_W, WORLD_H, BEACH_Y, randomRoadPoint } from './city.js';
 
 export const WANTED_LABELS = [
@@ -15,14 +19,19 @@ export class Police {
   constructor() {
     this.cruisers = [];
     this.officers = [];
+    this.helis = []; // police helicopters, wanted 4+
     this.rng = mulberry32(99);
     this.calmTimer = 0; // seconds without a crime
     this.bustProgress = 0; // 0..1 while an officer holds the player
   }
 
-  // How many cruisers / officers a wanted level fields.
+  // How many cruisers / officers / helis a wanted level fields.
   static unitsFor(level) {
-    return { cruisers: level === 0 ? 0 : Math.min(1 + Math.floor(level / 2), 4), officers: level >= 2 ? Math.min(level - 1, 4) : 0 };
+    return {
+      cruisers: level === 0 ? 0 : Math.min(1 + Math.floor(level / 2), 4),
+      officers: level >= 2 ? Math.min(level - 1, 4) : 0,
+      helis: level >= 4 ? 1 : 0,
+    };
   }
 
   // Crimes raise the heat. The level stays a whole number of stars: the
@@ -57,27 +66,42 @@ export class Police {
       const off = new Officer(player.x + Math.cos(a) * 420, player.y + Math.sin(a) * 420);
       this.officers.push(off);
     }
+    // Spawn the police heli once the heat hits 4 stars.
+    while (this.helis.length < want.helis) {
+      const a = this.rng() * Math.PI * 2;
+      const heli = new Heli(player.x + Math.cos(a) * 700, player.y + Math.sin(a) * 700, 0, 'police-heli');
+      heli.alt = 0.9;
+      heli.speed = 300;
+      this.helis.push(heli);
+    }
     // Remove extras when the heat drops.
     while (this.cruisers.length > want.cruisers) this.cruisers.pop();
     while (this.officers.length > want.officers) this.officers.pop();
+    while (this.helis.length > want.helis) this.helis.pop();
 
-    // Cruiser chase: steer toward the player and ram.
+    // Cruiser chase: steer toward the player and tap, not shred.
     for (const c of this.cruisers) {
       const targetAngle = Math.atan2(player.y - c.y, player.x - c.x);
       const d = dist(c.x, c.y, player.x, player.y);
       const steer = clamp(((targetAngle - c.angle + Math.PI * 3) % (Math.PI * 2) - Math.PI) * 1.4, -1, 1);
       const throttle = d > 60 ? 1 : 0.4;
       c.drive(throttle, steer, dt);
-      // Ram damage when it slams the player's car or the player on foot.
+      // Soft ram: a slow tap shoves the player's car aside; only a fast
+      // slam chips its health, and far less than it used to.
       if (d < 56) {
         if (player.inCar) {
-          if (Math.abs(c.speed) > 60) {
-            player.car.health -= 14 * dt * 4;
-            game.addShake(3);
+          if (Math.abs(c.speed) > 140) {
+            player.car.health -= 7 * dt * 4;
+            game.addShake(2);
+          } else {
+            // Nudge: push the player's car gently off its line.
+            const push = 26 * dt;
+            player.car.x += Math.cos(c.angle) * push;
+            player.car.y += Math.sin(c.angle) * push;
           }
         } else if (player.hurtCd <= 0) {
-          player.damage(8);
-          game.addShake(4);
+          player.damage(5);
+          game.addShake(3);
         }
       }
       if (c.health <= 0) c.dead = true;
@@ -91,12 +115,20 @@ export class Police {
     }
     this.officers = this.officers.filter((o) => o.health > 0 && dist(o.x, o.y, player.x, player.y) < 2600);
 
+    // The police heli keeps pace overhead and fires in bursts.
+    for (const h of this.helis) {
+      updatePoliceHeli(h, dt, game);
+      if (h.dead) game.explode(h.x, h.y);
+    }
+    this.helis = this.helis.filter((h) => !h.dead && dist(h.x, h.y, player.x, player.y) < 3600);
+
     // Wanted decays after a long quiet stretch with no police nearby.
     if (level > 0) {
       this.calmTimer += dt;
       const nearestCop = Math.min(
         ...this.cruisers.map((c) => dist(c.x, c.y, player.x, player.y)),
         ...this.officers.map((o) => dist(o.x, o.y, player.x, player.y)),
+        ...this.helis.map((h) => dist(h.x, h.y, player.x, player.y)),
         Infinity,
       );
       if (this.calmTimer > 26 && nearestCop > 700) {
@@ -108,9 +140,10 @@ export class Police {
       this.calmTimer = 0;
     }
 
-    // Busted: an officer holds the player for 2.5 s.
-    if (this.bustProgress > 0 && !player.inCar) {
-      this.bustProgress += dt / 2.5;
+    // Busted: an officer holds the player for 3.5 s (slower than before,
+    // so a new player can still break free by running).
+    if (this.bustProgress > 0 && !player.inCar && !player.inHeli) {
+      this.bustProgress += dt / 3.5;
       if (this.bustProgress >= 1) {
         player.busted = true;
         game.onBusted();
@@ -123,6 +156,7 @@ export class Police {
   clearAll() {
     this.cruisers = [];
     this.officers = [];
+    this.helis = [];
     this.bustProgress = 0;
   }
 }
@@ -144,8 +178,8 @@ class Officer {
     const ang = Math.atan2(player.y - this.y, player.x - this.x);
     this.angle = ang;
     this.runPhase += dt * 10;
-    if (player.inCar) {
-      // On foot they cannot catch a car: fall back and wait.
+    if (player.inCar || player.inHeli) {
+      // On foot they cannot catch a car or a heli: fall back and wait.
       return;
     }
     if (d > 34) {
@@ -153,11 +187,11 @@ class Officer {
       this.y += Math.sin(ang) * this.speed * dt;
     } else if (this.punchCd <= 0) {
       this.punchCd = 0.8;
-      player.damage(9);
+      player.damage(7);
       game.addShake(3);
       game.sound.hurt();
     }
     // Holding the player: if very close for a while, the bust begins.
-    if (d < 30) game.police.bustProgress += dt / 3;
+    if (d < 30) game.police.bustProgress += dt / 4;
   }
 }

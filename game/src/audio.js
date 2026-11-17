@@ -1,7 +1,7 @@
 // audio.js — all sound is synthesised with WebAudio: no audio files, no
-// network. Engine hum, police siren, gunshots, pickups, explosions and a
-// light synth bass loop for the radio. Everything is behind a mute toggle
-// and only starts after the first user gesture.
+// network. Engine hum, rotor thump, police siren, gunshots, pickups,
+// explosions and a light synth bass loop for the radio. Everything is
+// behind a mute toggle and only starts after the first user gesture.
 
 export class Sound {
   constructor() {
@@ -11,6 +11,8 @@ export class Sound {
     this.musicOn = true;
     this.engineOsc = null;
     this.engineGain = null;
+    this.rotorOsc = null;
+    this.rotorGain = null;
     this.sirenOsc = null;
     this.sirenGain = null;
     this.musicTimer = null;
@@ -96,13 +98,13 @@ export class Sound {
     src.start(t);
   }
 
-  // --- continuous sounds --------------------------------------------------
+  // --- continuous sounds ---------------------------------------------------
 
   // Engine hum follows the player's speed (0..1). Call every frame.
   engine(speedNorm, driving) {
     if (!this.ctx || this.muted) return;
     if (!driving) {
-      if (this.engineOsc) { this.engineGain.gain.value = 0; }
+      if (this.engineGain) this.engineGain.gain.value = 0;
       return;
     }
     if (!this.engineOsc) {
@@ -119,6 +121,29 @@ export class Sound {
     const t = this.ctx.currentTime;
     this.engineOsc.frequency.setTargetAtTime(55 + speedNorm * 130, t, 0.08);
     this.engineGain.gain.setTargetAtTime(0.05 + speedNorm * 0.05, t, 0.1);
+  }
+
+  // Rotor thump while the player flies: a slow square chop that follows
+  // altitude. Call every frame with the player's altitude (0..1).
+  rotor(alt) {
+    if (!this.ctx || this.muted) return;
+    if (alt <= 0.02) {
+      if (this.rotorGain) this.rotorGain.gain.value = 0;
+      return;
+    }
+    if (!this.rotorOsc) {
+      this.rotorOsc = this.ctx.createOscillator();
+      this.rotorOsc.type = 'square';
+      this.rotorOsc.frequency.value = 21;
+      this.rotorGain = this.ctx.createGain();
+      this.rotorGain.gain.value = 0;
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 300;
+      this.rotorOsc.connect(f).connect(this.rotorGain).connect(this.master);
+      this.rotorOsc.start();
+    }
+    this.rotorGain.gain.setTargetAtTime(0.03 + alt * 0.05, this.ctx.currentTime, 0.15);
   }
 
   // Two-tone police siren while any wanted level is active.

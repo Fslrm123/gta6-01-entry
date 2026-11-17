@@ -1,6 +1,6 @@
 // input.js — keyboard + mouse state for Solmarina. Keys are tracked by
 // `code` so WASD and arrows both work; the mouse gives an aim point in
-// screen space. Also exposes one-frame "pressed" edges for menus.
+// screen space. Also exposes one-frame "pressed" edges for menus and shops.
 
 export class Input {
   constructor(canvas) {

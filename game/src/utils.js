@@ -1,17 +1,15 @@
 // utils.js — small math and random helpers shared by every Solmarina module.
 // No game logic lives here, only pure functions.
 
-// Clamp a number into [min, max].
 export function clamp(v, min, max) {
   return v < min ? min : v > max ? max : v;
 }
 
-// Linear interpolation.
 export function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-// Shortest signed angle difference, in radians, wrapped to [-PI, PI].
+// Shortest signed angle difference, wrapped to [-PI, PI].
 export function angleDiff(a, b) {
   let d = (b - a) % (Math.PI * 2);
   if (d > Math.PI) d -= Math.PI * 2;
@@ -28,9 +26,7 @@ export function turnToward(a, b, step) {
 
 // Euclidean distance between two points.
 export function dist(ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  return Math.hypot(dx, dy);
+  return Math.hypot(bx - ax, by - ay);
 }
 
 // Deterministic PRNG (mulberry32) so the city layout is identical every run.
@@ -55,4 +51,10 @@ export function rot(x, y, angle) {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   return { x: x * c - y * s, y: x * s + y * c };
+}
+
+// Seconds as m:ss, for the timed Cash Run mission.
+export function fmtTime(sec) {
+  const s = Math.max(0, Math.ceil(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

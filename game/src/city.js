@@ -1,9 +1,10 @@
 // city.js — Solmarina, an original sun-soaked coastal city, generated the
 // same way on every load. A road grid divides the map into blocks; each
 // block holds stucco buildings and palms, downtown holds taller towers.
-// The south edge is beach and sea, the east holds the harbour, and one
-// block is kept clear as Palmera Park. The queries at the bottom answer
-// "is this on a road / inside a building?" for driving, traffic and spawns.
+// The south edge is beach and sea, the east holds the harbour with a
+// helipad, and one block is kept clear as Palmera Park. The queries at
+// the bottom answer "is this on a road / inside a building?" for driving,
+// traffic and spawns.
 
 import { clamp, mulberry32, pick } from './utils.js';
 
@@ -22,7 +23,7 @@ const FACADES = [
   ['#a8c8a0', '#8ab07e', '#c2d8b8'], // green tile
 ];
 
-// Named places the HUD and the missions point at (all invented).
+// Named places the HUD, the shops and the missions point at (all invented).
 export const LANDMARKS = {
   pier: { x: 2600, y: 3980, name: 'Solmarina Pier' },
   park: { x: 900, y: 1500, name: 'Palmera Park' },
@@ -34,6 +35,8 @@ export const LANDMARKS = {
   spray: { x: 3900, y: 1700, name: 'Sunset Spray Shop' },
   gunshop: { x: 3500, y: 2900, name: 'Ironworks Gun Shop' },
   hospital: { x: 1300, y: 900, name: 'Solmarina General' },
+  helipad: { x: 4620, y: 2280, name: 'Harbour Helipad' },
+  market: { x: 1700, y: 1100, name: 'Coastal Market' },
 };
 
 // The park block, kept free of buildings by the generator and drawn
@@ -115,9 +118,12 @@ function clearPark(buildings, trees, rng) {
 
 function scatterProps(rng, roadsV, roadsH) {
   const props = [];
+  // Beach umbrellas and chairs along the sand.
   for (let x = 300; x < WORLD_W - 300; x += 260) {
     props.push({ kind: 'umbrella', x: x + rng() * 120, y: BEACH_Y + 90 + rng() * 160 });
+    if (rng() < 0.5) props.push({ kind: 'chair', x: x + rng() * 120, y: BEACH_Y + 130 + rng() * 140 });
   }
+  // Crates around the harbour docks.
   for (let i = 0; i < 22; i++) {
     props.push({
       kind: 'crate',
@@ -125,6 +131,13 @@ function scatterProps(rng, roadsV, roadsH) {
       y: 2300 + rng() * 600,
       s: 0.8 + rng() * 0.7,
     });
+  }
+  // Boats moored off the pier and the harbour.
+  for (let i = 0; i < 5; i++) {
+    props.push({ kind: 'boat', x: 2200 + i * 260 + rng() * 80, y: 4080 + rng() * 30, angle: (rng() - 0.5) * 0.5 });
+  }
+  for (let i = 0; i < 3; i++) {
+    props.push({ kind: 'boat', x: 4960 + rng() * 60, y: 2400 + i * 220, angle: Math.PI / 2 + (rng() - 0.5) * 0.4 });
   }
   for (const rx of roadsV) {
     for (const ry of roadsH) {

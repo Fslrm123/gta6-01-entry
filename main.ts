@@ -1,8 +1,9 @@
-// main.ts — Solmarina's entry program. Copies game/ and screenshots/ into
-// the output directory and writes dossier.json with buildDossier from the
-// kit's vendored library, exactly as the scorer rebuilds it. Runs twice and
-// must write identical bytes both times, so the copy walks entries in
-// sorted order and the output directory is rebuilt from scratch each run.
+// main.ts — Solmarina's entry program (round 2: pixel art). Copies game/
+// and screenshots/ into the output directory and writes dossier.json with
+// buildDossier from the kit's vendored library, exactly as the scorer
+// rebuilds it. Runs twice and must write identical bytes both times, so
+// the copy walks entries in sorted order and the output directory is
+// rebuilt from scratch each run.
 
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';

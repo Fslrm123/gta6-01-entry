@@ -1,6 +1,8 @@
 /* Solmarina — page chrome for the game canvas. The game itself draws
    everything on the canvas; this file only makes the page fill the window
-   with a dark backdrop and a crosshair cursor while aiming. */
+   with a dark backdrop and a crosshair cursor while aiming. The canvas is
+   upscaled from a tiny pixel buffer, so image-rendering: pixelated keeps
+   every chunky pixel crisp instead of blurred. */
 
 html,
 body {
@@ -19,4 +21,6 @@ body {
   cursor: crosshair;
   outline: none;
   background: #7fbf5a;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
