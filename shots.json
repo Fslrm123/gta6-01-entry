@@ -1,1 +1,1 @@
-[{"name":"1-chase.jpg","query":"?scene=chase","wait":1700},{"name":"2-shootout.jpg","query":"?scene=shootout","wait":2600},{"name":"3-downtown.jpg","query":"?scene=downtown","wait":1700},{"name":"4-port.jpg","query":"?scene=port","wait":2100}]
+[{"name":"1-chase.jpg","query":"?scene=chase&seed=1"},{"name":"2-shootout.jpg","query":"?scene=shootout&seed=1"},{"name":"3-downtown.jpg","query":"?scene=downtown&seed=1"},{"name":"4-port.jpg","query":"?scene=port&seed=1"}]

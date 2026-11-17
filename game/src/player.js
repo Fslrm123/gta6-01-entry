@@ -1,8 +1,8 @@
 // player.js — Leo Marín, the player character. On foot he runs, punches
-// and shoots (mouse aims); in a car he drives it. He carries health, armor,
-// cash, a weapon and a wanted level, and he can be busted or wasted.
+// and shoots with the mouse as his aim; in a car he drives it. He carries
+// health, armor, cash and a weapon, and the city can bust him or waste him.
 
-import { clamp, dist, turnToward } from './utils.js';
+import { clamp } from './utils.js';
 import { hitsBuilding, WORLD_W, WORLD_H } from './city.js';
 
 export const WEAPONS = {
@@ -22,7 +22,7 @@ export class Player {
     this.cash = 250;
     this.weapon = 'fists';
     this.ammo = { pistol: 0, smg: 0 };
-    this.car = null; // the Car he is driving, or null on foot
+    this.car = null; // the Car being driven, or null on foot
     this.attackCd = 0;
     this.hurtCd = 0;
     this.runPhase = 0;
@@ -38,22 +38,25 @@ export class Player {
   get inCar() { return this.car !== null; }
   get weaponDef() { return WEAPONS[this.weapon]; }
 
-  giveWeapon(name, ammo) {
+  // Hand the player a weapon and top up its ammo. Ammo defaults to 0, so a
+  // call that forgets the amount can never add undefined and poison the
+  // count into NaN.
+  giveWeapon(name, ammo = 0) {
     this.weapon = name;
     this.ammo[name] = (this.ammo[name] || 0) + ammo;
   }
 
-  // Damage goes to armor first, then health. Returns true if wasted.
+  // Damage is soaked by armor first, then health. True when it wastes him.
   damage(amount) {
     if (this.hurtCd > 0 || this.wasted) return false;
     this.hurtCd = 0.5;
-    let left = amount;
+    let remaining = amount;
     if (this.armor > 0) {
-      const absorbed = Math.min(this.armor, left);
-      this.armor -= absorbed;
-      left -= absorbed;
+      const soaked = Math.min(this.armor, remaining);
+      this.armor -= soaked;
+      remaining -= soaked;
     }
-    this.health -= left;
+    this.health -= remaining;
     if (this.health <= 0) {
       this.health = 0;
       this.wasted = true;
@@ -69,69 +72,69 @@ export class Player {
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.hurtCd = Math.max(0, this.hurtCd - dt);
     if (this.car) {
-      this.updateDriving(dt, input, game);
+      this.driveStep(dt, input, game);
       this.x = this.car.x;
       this.y = this.car.y;
       this.angle = this.car.angle;
     } else {
-      this.updateOnFoot(dt, input, game);
+      this.walkStep(dt, input, game);
     }
   }
 
-  updateOnFoot(dt, input, game) {
+  walkStep(dt, input, game) {
     const axis = input.moveAxis();
     const len = Math.hypot(axis.x, axis.y);
     this.moving = len > 0;
-    const sprint = input.down('ShiftLeft', 'ShiftRight') ? 1.45 : 1;
-    const spd = 210 * sprint;
+    const sprinting = input.down('ShiftLeft', 'ShiftRight');
+    const pace = 210 * (sprinting ? 1.45 : 1);
     if (len > 0) {
-      const nx = this.x + (axis.x / len) * spd * dt;
-      const ny = this.y + (axis.y / len) * spd * dt;
-      if (!hitsBuilding(nx, this.y, 13)) this.x = nx;
-      if (!hitsBuilding(this.x, ny, 13)) this.y = ny;
+      const stepX = (axis.x / len) * pace * dt;
+      const stepY = (axis.y / len) * pace * dt;
+      if (!hitsBuilding(this.x + stepX, this.y, 13)) this.x += stepX;
+      if (!hitsBuilding(this.x, this.y + stepY, 13)) this.y += stepY;
       this.angle = Math.atan2(axis.y, axis.x);
-      this.runPhase += dt * 11 * sprint;
+      this.runPhase += dt * 11 * (sprinting ? 1.45 : 1);
     }
     this.x = clamp(this.x, 40, WORLD_W - 40);
     this.y = clamp(this.y, 40, WORLD_H - 60);
-    // Aim with the mouse: face the cursor.
-    if (game && game.camera) {
-      const wx = game.camera.x + input.mouse.x;
-      const wy = game.camera.y + input.mouse.y;
-      if (this.weapon !== 'fists' || input.mouse.down) {
-        this.angle = Math.atan2(wy - this.y, wx - this.x);
-      }
+    // With a gun out, always face the cursor; with fists, only while aiming.
+    if (game && game.camera && (this.weapon !== 'fists' || input.mouse.down)) {
+      const worldX = game.camera.x + input.mouse.x;
+      const worldY = game.camera.y + input.mouse.y;
+      this.angle = Math.atan2(worldY - this.y, worldX - this.x);
     }
-    // Attack: click (or F) to shoot / punch.
-    const wantAttack = input.mouse.down || input.down('KeyF');
-    if (wantAttack && this.attackCd <= 0) {
-      const w = this.weaponDef;
-      if (this.weapon === 'fists' || this.ammo[this.weapon] > 0 || this.weapon === 'fists') {
-        if (this.weapon !== 'fists') this.ammo[this.weapon]--;
-        this.attackCd = w.rate;
-        this.shotsFired++;
-        if (game) game.playerAttack(this);
-      }
-    }
+    this.tryAttack(input, game);
   }
 
-  updateDriving(dt, input, game) {
-    // Staged scenes (screenshots) drive themselves: full throttle, steering
-    // snapped to the avenue the car is on, so the shot shows motion.
+  tryAttack(input, game) {
+    const attacking = input.mouse.down || input.down('KeyF');
+    if (!attacking || this.attackCd > 0) return;
+    const def = this.weaponDef;
+    const canFire = this.weapon === 'fists' || this.ammo[this.weapon] > 0;
+    if (!canFire) return;
+    if (this.weapon !== 'fists') this.ammo[this.weapon]--;
+    this.attackCd = def.rate;
+    this.shotsFired++;
+    if (game) game.playerAttack(this);
+  }
+
+  driveStep(dt, input, game) {
+    // Staged screenshot scenes drive on their own: full throttle, steering
+    // eased onto the avenue the car is already on, so the shot shows motion.
     if (game && game.autoDrive) {
-      const target = Math.round(this.car.angle / (Math.PI / 2)) * (Math.PI / 2);
-      const steer = clamp(((target - this.car.angle + Math.PI * 3) % (Math.PI * 2) - Math.PI) * 2.5, -1, 1);
+      const laneAngle = Math.round(this.car.angle / (Math.PI / 2)) * (Math.PI / 2);
+      const steer = clamp(((laneAngle - this.car.angle + Math.PI * 3) % (Math.PI * 2) - Math.PI) * 2.5, -1, 1);
       this.car.drive(1, steer, dt);
       return;
     }
     const throttle = (input.down('KeyW', 'ArrowUp') ? 1 : 0) - (input.down('KeyS', 'ArrowDown') ? 0.85 : 0);
     const steer = (input.down('KeyD', 'ArrowRight') ? 1 : 0) - (input.down('KeyA', 'ArrowLeft') ? 1 : 0);
     this.car.drive(throttle, steer, dt);
-    // Handbrake: Space locks the rear wheels for a drift.
+    // Space is the handbrake: it kills speed for a drift.
     if (input.down('Space')) this.car.speed *= Math.pow(0.15, dt);
   }
 
-  // Step out of the car to its left side.
+  // Climb out on the car's left side.
   exitCar() {
     if (!this.car) return;
     const car = this.car;

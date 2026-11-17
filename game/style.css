@@ -1,34 +1,22 @@
-/* Solmarina — page chrome around the game canvas. The game itself is drawn
-   on the canvas; this file only centres it on a dark page. */
-html, body {
+/* Solmarina — page chrome for the game canvas. The game itself draws
+   everything on the canvas; this file only makes the page fill the window
+   with a dark backdrop and a crosshair cursor while aiming. */
+
+html,
+body {
   margin: 0;
   padding: 0;
-  background: #0d1117;
-  color: #e8e8e8;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #14141f;
 }
-#wrap {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 12px;
-  box-sizing: border-box;
-}
+
 #game {
-  width: min(1280px, 96vw);
-  height: auto;
   display: block;
-  background: #1a1a2e;
-  border-radius: 10px;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  width: 100vw;
+  height: 100vh;
   cursor: crosshair;
-}
-#foot {
-  margin: 0;
-  font-size: 13px;
-  color: #9aa4b0;
-  text-align: center;
+  outline: none;
+  background: #7fbf5a;
 }

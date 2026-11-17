@@ -25,10 +25,16 @@ export class Police {
     return { cruisers: level === 0 ? 0 : Math.min(1 + Math.floor(level / 2), 4), officers: level >= 2 ? Math.min(level - 1, 4) : 0 };
   }
 
+  // Crimes raise the heat. The level stays a whole number of stars: the
+  // HUD looks the label up by index, and the Heat Wave mission waits for
+  // exactly 0 — a fractional level would show as "undefined" up top and
+  // could never cool back to zero.
   addWanted(game, amount, reason) {
-    if (game.player.wasted || game.player.busted) return;
+    const p = game.player;
+    if (p.wasted || p.busted) return;
     const before = game.wanted;
-    game.wanted = clamp(game.wanted + amount, 0, 5);
+    const raised = Math.round(game.wanted + amount);
+    game.wanted = clamp(raised, 0, 5);
     this.calmTimer = 0;
     if (game.wanted > before) game.notify(`Wanted level ${game.wanted} — ${reason}`, 'bad');
   }
