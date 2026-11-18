@@ -1,11 +1,10 @@
-// main.ts — Solmarina's entry program (round 2: pixel art). Copies game/
-// and screenshots/ into the output directory and writes dossier.json with
-// buildDossier from the kit's vendored library, exactly as the scorer
-// rebuilds it. Runs twice and must write identical bytes both times, so
-// the copy walks entries in sorted order and the output directory is
-// rebuilt from scratch each run.
+// main.ts — Solmarina's entry program. Copies game/ and screenshots/ into
+// the output directory and writes dossier.json with buildDossier from the
+// kit's vendored library, exactly as the scorer rebuilds it. It runs twice
+// and must write identical bytes both times, so the copy walks entries in
+// sorted order and the output directory is rebuilt from scratch each run.
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildDossier } from './vendor/makefun-game.ts';
 
@@ -28,17 +27,15 @@ function main() {
   const gameDir = join(repoRoot, 'game');
   const shotsDir = join(repoRoot, 'screenshots');
   if (!existsSync(gameDir) || !statSync(gameDir).isDirectory()) {
-    throw new Error('game/ directory is missing from the repository');
+    throw new Error('game/: no such directory');
   }
-  if (!existsSync(join(gameDir, 'index.html'))) {
-    throw new Error('game/index.html is missing from the repository');
+  if (!existsSync(shotsDir) || !statSync(shotsDir).isDirectory()) {
+    throw new Error('screenshots/: no such directory');
   }
   rmSync(outputDir, { recursive: true, force: true });
   mkdirSync(outputDir, { recursive: true });
   copyTreeSorted(gameDir, join(outputDir, 'game'));
-  if (existsSync(shotsDir) && statSync(shotsDir).isDirectory()) {
-    copyTreeSorted(shotsDir, join(outputDir, 'screenshots'));
-  }
+  copyTreeSorted(shotsDir, join(outputDir, 'screenshots'));
   const dossier = buildDossier(outputDir, {
     text_max_bytes: 163840,
     screenshots: { max: 4, max_bytes: 262144 },
@@ -46,9 +43,8 @@ function main() {
     game_max_bytes: 50331648,
   });
   writeFileSync(join(outputDir, 'dossier.json'), dossier);
-  // A human-readable trace of what was handed in, for the run log.
-  const indexBytes = readFileSync(join(gameDir, 'index.html')).length;
-  console.log(`Solmarina handed in: game/index.html ${indexBytes} bytes, dossier written to dossier.json`);
+  const files = readdirSync(join(outputDir, 'game')).length;
+  console.log(`SOLMARINA dossier written: ${dossier.length} bytes, game/ top-level entries ${files}`);
 }
 
 main();

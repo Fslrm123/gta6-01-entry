@@ -1,32 +1,94 @@
-// audio.js — tiny WebAudio bleeps + radio ticker (no assets, fully offline). Freshly authored.
-import { G } from './state.js';
-export const STATIONS = ['SOL FM 88.1 — Sunset Hits', 'NEON 104.5 — Synthwave', 'MARINA 91.7 — Salsa & Soul', 'TIDE 99.9 — Talk & Traffic'];
-let ctx = null;
-export function ensureAudio() {
-  if (ctx || typeof window === 'undefined') return;
-  try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { ctx = null; }
+// audio.js — procedural chiptune radio. No audio files: every station is a
+// little step-sequencer played through WebAudio oscillators. The context is
+// created lazily on the first user gesture; every call is guarded so a
+// headless browser without audio never throws.
+export const STATIONS = ['SOL FM', 'WAVE 98', 'BASSLINE', 'TALK SOL'];
+
+const MELODIES = [
+  // SOL FM — sunny major-key loop
+  [523, 659, 784, 659, 587, 659, 784, 1047],
+  // WAVE 98 — lazy minor drift
+  [440, 523, 440, 392, 330, 392, 440, 523],
+  // BASSLINE — low pulse
+  [110, 110, 131, 110, 98, 110, 147, 131],
+  // TALK SOL — sparse blips
+  [660, 0, 660, 0, 0, 660, 0, 0],
+];
+
+export class Radio {
+  constructor() {
+    this.ctx = null;
+    this.station = 0;
+    this.muted = false;
+    this.step = 0;
+    this.nextTime = 0;
+    this.gain = null;
+    this.timer = null;
+  }
+  ensure() {
+    if (this.ctx) return true;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      this.ctx = new AC();
+      this.gain = this.ctx.createGain();
+      this.gain.gain.value = 0.05;
+      this.gain.connect(this.ctx.destination);
+      this.nextTime = this.ctx.currentTime + 0.1;
+      this.timer = setInterval(() => this.tick(), 120);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  tick() {
+    if (!this.ctx || this.muted) return;
+    try {
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+      const mel = MELODIES[this.station % MELODIES.length];
+      while (this.nextTime < this.ctx.currentTime + 0.25) {
+        const f = mel[this.step % mel.length];
+        if (f) this.blip(f, this.nextTime, this.station === 2 ? 'sawtooth' : 'square');
+        this.nextTime += this.station === 2 ? 0.16 : 0.22;
+        this.step++;
+      }
+    } catch (e) { /* audio is cosmetic; never break the game */ }
+  }
+  blip(freq, when, type) {
+    const o = this.ctx.createOscillator();
+    o.type = type;
+    o.frequency.value = freq;
+    o.connect(this.gain);
+    o.start(when);
+    o.stop(when + 0.18);
+  }
+  cycle() {
+    this.station = (this.station + 1) % STATIONS.length;
+    this.step = 0;
+    return STATIONS[this.station];
+  }
+  toggleMute() {
+    this.muted = !this.muted;
+    return this.muted;
+  }
+  name() { return STATIONS[this.station]; }
 }
-export function beep(freq = 440, dur = 0.08, type = 'square', vol = 0.05) {
-  if (!ctx || G.muted) return;
+
+// Short UI blip (pickup / click). Safe to call before any gesture.
+export function uiBlip(freq = 880) {
   try {
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = type; o.frequency.value = freq;
-    g.gain.setValueAtTime(vol, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-    o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + dur);
-  } catch { /* audio is cosmetic */ }
-}
-export const sfx = {
-  shoot: () => beep(180, 0.07, 'square', 0.06),
-  punch: () => beep(90, 0.08, 'sawtooth', 0.07),
-  pickup: () => { beep(660, 0.06); setTimeout(() => beep(880, 0.09), 60); },
-  cash: () => { beep(880, 0.06); setTimeout(() => beep(1320, 0.12), 70); },
-  siren: () => beep(720, 0.15, 'sine', 0.02),
-  error: () => beep(140, 0.15, 'sawtooth', 0.06),
-  mission: () => { [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.12), i * 90)); },
-};
-export function radioTicker() {
-  if (!G.radioOn) return 'RADIO OFF — press M';
-  const songs = ['“Golden Hour” — The Palms', '“Neon Tide” — Velvet Static', '“Causeway Run” — DJ Marisol', '“Anchor Down” — Los Pelicanos'];
-  return STATIONS[G.radio % STATIONS.length] + ' ♪ ' + songs[(G.radio + Math.floor(G.time / 600)) % songs.length];
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    g.gain.value = 0.04;
+    o.type = 'square';
+    o.frequency.value = freq;
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + 0.08);
+    o.onended = () => ctx.close().catch(() => {});
+  } catch (e) { /* ignore */ }
 }

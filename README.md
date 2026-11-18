@@ -1,32 +1,39 @@
-# gta6-01-entry
+# SOLMARINA
 
-[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![rank](https://make.fun/badge/gta6-01/Fslrm123/gta6-01-entry/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/Fslrm123/gta6-01-entry/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+A pixel-art open-world crime game in the spirit of GTA 6 — built for the
+make.fun bounty "Make GTA 6". Original city, crew, story and art only.
 
-SOLMARINA — an original top-down open-world crime game for make.fun gta6-01, rendered entirely in **pixel art**: a sun-soaked coastal city drawn chunky and crisp, GTA 1/2 style, with a flyable helicopter, two shops, heists, and a 10-mission story from fixer Ada Kline. Vanilla JS on canvas, no libraries, no network — it plays fully offline in a desktop browser.
+You are Rico, a driver new to the island city of Solmarina. Fixer Ada Kline
+has ten jobs for you, from a first errand at Marina Market to the Golden
+Anchor casino vault. Drive, fly the Seahawk helicopter, dodge the PD, and
+come home rich.
 
-## Run it
+## Play
 
-```sh
-node serve.ts
-```
-
-Then open http://localhost:8080 and press Enter.
+Open `game/index.html` in a desktop browser (or serve the `game/` folder
+with any static server). No network, no build step, no libraries — vanilla
+JavaScript + canvas, all art drawn procedurally in a 16-colour palette.
 
 ## Controls
 
-- **WASD / arrows** — move & drive · **Shift** — sprint
-- **Mouse** — aim · **Click / F** — punch & shoot
-- **E** — steal / enter a car or helicopter, open a shop, respray, take Ada's next job
-- **Space** — handbrake (car) / climb (helicopter) · **C** — descend (helicopter)
-- **1 / 2 / 3** — fists / pistol / SMG · **B** — open a nearby shop
-- **P** — save · **M** — radio on/off · **L** — mute · **Esc** — pause
+- **WASD / arrows** — move on foot, drive, steer the helicopter
+- **Shift** — sprint
+- **E** — enter / exit a car, carjack, fly the Seahawk, open a shop
+- **Mouse aim + click** — shoot
+- **1 / 2 / 3** — pistol / SMG / rifle
+- **Space / C** — helicopter climb / descend
+- **R** — cycle radio station, **M** — mute
+- **Shift+S** — save, **L** — load
+- **P / Esc** — pause and full city map
 
-## The city
+## Features
 
-Solmarina is a fully original city: Palmera Park, Solmarina Pier, East Harbour, Casino Lumen, Mama Rosa's Diner, Rosa's Garage, the Sunset Spray Shop, Solmarina General hospital, a Harbour Helipad and a safehouse on the west side. Steal cars and the helicopter, outrun the 5-star wanted level with police cruisers, officers and a police heli, spend your cash in the Ironworks Gun Shop and Coastal Market, and pull two heists — the Harbour Heist and the Casino Vault — before the Golden Anchor finale. No Rockstar / GTA names, characters, art, music or maps — everything here is invented for this game.
-
----
-
-<sub>Entered on [make.fun](https://make.fun/?ref=3v2j7j85&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
+- Coastal island city: harbour, downtown, beach, hills, plaza, bridge
+- Traffic, pedestrians, carjacking, 5-star wanted level, police chases
+- Police helicopter with searchlight at 4+ stars
+- Flyable Seahawk helicopter with ground shadow
+- Gun shop, market, safehouse, garage, respray (clears heat)
+- 10-mission Ada Kline story arc with payouts up to $10,000
+- Crew portraits and dialogue: Ada, Rico, Marisol, Rig
+- Radio stations, news ticker, dense HUD with minimap
+- Save/load, 5 stash spots, stats

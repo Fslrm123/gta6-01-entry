@@ -1,82 +1,105 @@
-// city.js — Solmarina: districts, roads, buildings, landmarks, collision. Freshly authored.
-import { WORLD_W, WORLD_H } from './state.js';
-import { clamp, mulberry32 } from './utils.js';
+// city.js — Solmarina island: roads, blocks, buildings and every fixed place.
+// The island is a 2400x1800 world. Roads form a grid; blocks between them hold
+// buildings, parks and palms. All positions are fixed constants so missions,
+// shops and the minimap always agree.
+import { PAL, mulberry32, pick } from './palette.js';
 
-export const DISTRICTS = [
-  { name: 'Coral Strand', x: 260, y: 0, w: 560, h: 640, color: '#f2c98a', tag: 'BEACH' },
-  { name: 'Neon Mile', x: 820, y: 0, w: 640, h: 640, color: '#ff2e88', tag: 'NIGHTLIFE' },
-  { name: 'Miramar Strip', x: 1460, y: 0, w: 1100, h: 640, color: '#7b2fbe', tag: 'HOTELS' },
-  { name: 'Pelican Marina', x: 260, y: 640, w: 560, h: 640, color: '#0e7c86', tag: 'DOCKS' },
-  { name: 'Casino Row', x: 820, y: 640, w: 640, h: 640, color: '#ffc300', tag: 'CASINO' },
-  { name: 'Downtown', x: 1460, y: 640, w: 1100, h: 640, color: '#8a8fa3', tag: 'CITY' },
-  { name: 'Beachfront', x: 260, y: 1280, w: 560, h: 640, color: '#ff7e5f', tag: 'PIER' },
-  { name: 'East Harbour', x: 820, y: 1280, w: 640, h: 640, color: '#095a63', tag: 'PORT' },
-  { name: 'Solmarina Hills', x: 1460, y: 1280, w: 1100, h: 640, color: '#3fae5a', tag: 'HOMES' },
-];
+export const WORLD = { w: 2400, h: 1800 };
+export const ISLAND = { x: 120, y: 120, w: 2160, h: 1560 };
+export const ROADS_V = [300, 700, 1100, 1500, 1900];
+export const ROADS_H = [300, 650, 1000, 1350];
 
-export const ROADS_X = [320, 640, 960, 1280, 1600, 1920, 2240];
-export const ROADS_Y = [320, 640, 960, 1280, 1600];
-
-export const LANDMARKS = {
-  safehouse: { x: 420, y: 1420, name: 'SAFEHOUSE', label: 'Safehouse' },
-  gunshop: { x: 1010, y: 700, name: 'IRONWORKS GUN SHOP', label: 'Gun Shop' },
-  market: { x: 1330, y: 1020, name: 'COASTAL MARKET', label: 'Market' },
-  respray: { x: 1700, y: 1350, name: 'SUNSET SPRAY SHOP', label: 'Respray' },
-  garage: { x: 2050, y: 1450, name: "ROSA'S GARAGE", label: 'Garage' },
-  helipad: { x: 980, y: 1420, name: 'HARBOUR HELIPAD', label: 'Heli' },
-  hospital: { x: 2100, y: 800, name: 'SOLMARINA GENERAL', label: 'Hospital' },
-  casino: { x: 1130, y: 820, name: 'CASINO LUMEN', label: 'Casino' },
-  pier: { x: 300, y: 1560, name: 'SOLMARINA PIER', label: 'Pier' },
-  ferris: { x: 560, y: 240, name: 'FERRIS WHEEL', label: 'Ferris' },
-  marina: { x: 480, y: 900, name: 'PELICAN MARINA', label: 'Marina' },
-  diner: { x: 1500, y: 1180, name: "MAMA ROSA'S DINER", label: 'Diner' },
+export const PLACES = {
+  safehouse: { x: 560, y: 420, name: 'Safehouse', label: 'SAFEHOUSE' },
+  gunshop: { x: 1180, y: 340, name: "Rico's Guns", label: 'GUN SHOP' },
+  market: { x: 1420, y: 700, name: 'Marina Market', label: 'MARKET' },
+  respray: { x: 760, y: 1080, name: 'Spray & Go', label: 'RESPRAY' },
+  garage: { x: 500, y: 470, name: 'Garage', label: 'GARAGE' },
+  helipad: { x: 300, y: 1500, name: 'Heli Pad', label: 'HELI PAD' },
+  harbour: { x: 220, y: 650, name: 'Harbour Docks', label: 'HARBOUR' },
+  casino: { x: 1300, y: 480, name: 'Golden Anchor Casino', label: 'CASINO' },
+  plaza: { x: 1100, y: 650, name: 'Plaza Sol', label: 'PLAZA' },
+  beach: { x: 1200, y: 1560, name: 'Sol Beach', label: 'BEACH' },
 };
 
-// Buildings generated once (deterministic): blocks between roads, skipping landmark plots.
-export const BUILDINGS = [];
-{
-  const rng = mulberry32(20261118);
-  const plots = [];
-  for (let gx = 0; gx < 7; gx++) for (let gy = 0; gy < 5; gy++) {
-    const bx = 320 + gx * 320, by = 320 + gy * 320;
-    plots.push({ x: bx + 24, y: by + 24, w: 120 + rng() * 90, h: 90 + rng() * 80 });
-  }
-  // keep clear of landmarks & roads
-  for (const p of plots) {
-    let clear = true;
-    for (const lm of Object.values(LANDMARKS)) {
-      if (Math.abs(p.x + p.w / 2 - lm.x) < 150 && Math.abs(p.y + p.h / 2 - lm.y) < 150) { clear = false; break; }
+// Five stash spots: walk up and press E to crack one open (+$150 each, once).
+export const STASHES = [
+  { x: 420, y: 820, taken: false },
+  { x: 980, y: 1240, taken: false },
+  { x: 1620, y: 420, taken: false },
+  { x: 2050, y: 900, taken: false },
+  { x: 900, y: 1560, taken: false },
+];
+
+// Buildings generated deterministically per block. Each block is the rectangle
+// between two neighbouring roads; a building sits inside it with a roof colour.
+export function buildCity(seed) {
+  const rng = mulberry32(seed);
+  const buildings = [];
+  const palms = [];
+  const parks = [];
+  for (let vi = 0; vi < ROADS_V.length - 1; vi++) {
+    for (let hi = 0; hi < ROADS_H.length - 1; hi++) {
+      const bx0 = ROADS_V[vi] + 40;
+      const by0 = ROADS_H[hi] + 40;
+      const bx1 = ROADS_V[vi + 1] - 40;
+      const by1 = ROADS_H[hi + 1] - 40;
+      const cx = (bx0 + bx1) / 2;
+      const cy = (by0 + by1) / 2;
+      // Skip the plaza block and the beach strip so they stay open.
+      if (Math.abs(cx - 1100) < 260 && Math.abs(cy - 650) < 200) {
+        parks.push({ x: bx0, y: by0, w: bx1 - bx0, h: by1 - by0 });
+        continue;
+      }
+      if (cy > 1450) continue; // beach stays open sand
+      const roof = pick(rng, [PAL.roofA, PAL.roofB, PAL.roofC]);
+      const w = 90 + rng() * 90;
+      const h = 70 + rng() * 70;
+      buildings.push({ x: cx - w / 2, y: cy - h / 2, w, h, roof, solid: true });
+      // A palm or two on the block corners.
+      for (let p = 0; p < 2; p++) {
+        palms.push({ x: bx0 + 14 + rng() * (bx1 - bx0 - 28), y: by0 + 14 + rng() * (by1 - by0 - 28) });
+      }
     }
-    if (clear) BUILDINGS.push({ ...p, c: ['#5a4a7a', '#7a5a3a', '#3a5a7a', '#6a3a5a', '#4a6a4a'][Math.floor(rng() * 5)], h: 10 + rng() * 22 });
   }
-  // palms along the beach
-  BUILDINGS.palms = [];
-  for (let i = 0; i < 26; i++) BUILDINGS.palms.push({ x: 270 + rng() * 60, y: 60 + i * 68 + rng() * 30 });
+  // Harbour warehouses along the west docks.
+  buildings.push({ x: 150, y: 500, w: 110, h: 80, roof: PAL.roofB, solid: true });
+  buildings.push({ x: 150, y: 800, w: 110, h: 80, roof: PAL.roofA, solid: true });
+  buildings.push({ x: 150, y: 1100, w: 110, h: 80, roof: PAL.roofC, solid: true });
+  return { buildings, palms, parks };
 }
 
-export function districtAt(x, y) {
-  for (const d of DISTRICTS) if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d;
-  return { name: 'Open Sea', color: '#0e7c86', tag: 'SEA' };
-}
-export function isWater(x, y) {
-  if (x < 260) {
-    // causeway bridge crosses the water at y 880..960
-    if (y >= 880 && y <= 960) return false;
-    return true;
-  }
-  return false;
-}
-export function isRoad(x, y) {
-  for (const rx of ROADS_X) if (Math.abs(x - rx) < 26) return true;
-  for (const ry of ROADS_Y) if (Math.abs(y - ry) < 26) return true;
-  return false;
-}
-export function collideBuildings(x, y, r) {
-  for (const b of BUILDINGS) {
-    if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return b;
+// True when point (x,y) is inside a solid building (with a small margin).
+export function hitsBuilding(buildings, x, y, margin = 2) {
+  for (const b of buildings) {
+    if (x > b.x - margin && x < b.x + b.w + margin && y > b.y - margin && y < b.y + b.h + margin) return b;
   }
   return null;
 }
-export function clampWorld(x, y) {
-  return { x: clamp(x, 8, WORLD_W - 8), y: clamp(y, 8, WORLD_H - 8) };
+
+// True when (x,y) is on a road (road half-width 26).
+export function onRoad(x, y) {
+  for (const rx of ROADS_V) if (Math.abs(x - rx) < 26) return true;
+  for (const ry of ROADS_H) if (Math.abs(y - ry) < 26) return true;
+  return false;
+}
+
+// Nearest road point to (x,y): used to snap traffic onto the grid.
+export function snapToRoad(x, y) {
+  let best = null;
+  let bd = Infinity;
+  for (const rx of ROADS_V) {
+    const d = Math.abs(x - rx);
+    if (d < bd) { bd = d; best = { x: rx, y }; }
+  }
+  for (const ry of ROADS_H) {
+    const d = Math.abs(y - ry);
+    if (d < bd) { bd = d; best = { x, y: ry }; }
+  }
+  return best;
+}
+
+// Is the point on dry land (inside the island, not in the sea)?
+export function onLand(x, y) {
+  return x > ISLAND.x && x < ISLAND.x + ISLAND.w && y > ISLAND.y && y < ISLAND.y + ISLAND.h;
 }

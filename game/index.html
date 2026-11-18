@@ -3,13 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SOLMARINA — Open-World Crime</title>
-<link rel="stylesheet" href="style.css">
+<title>SOLMARINA — a pixel open-world crime story</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #14141c; height: 100%; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #game {
+    width: min(100vw, 177.78vh);
+    height: min(100vh, 56.25vw);
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #1d6fb8;
+    cursor: crosshair;
+  }
+</style>
 </head>
 <body>
-<div id="wrap">
-  <canvas id="game" width="480" height="270"></canvas>
-</div>
-<script type="module" src="src/main.js"></script>
+<canvas id="game" width="960" height="540"></canvas>
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>

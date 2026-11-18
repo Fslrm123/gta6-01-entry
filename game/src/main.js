@@ -1,228 +1,196 @@
-// main.js — game loop, screens, interactions, screenshot scenes, debug API. Freshly authored.
-import { G, resetState } from './state.js';
-import { initInput, keys, mouse, edgePressed } from './input.js';
-import { ensureAudio, beep } from './audio.js';
-import { updatePlayer, spawnPlayer, respawn, showMessage, showBanner, hurtPlayer } from './player.js';
-import { spawnTraffic, updateTraffic, updateDriving, tryEnterCar, exitCar, nearestCar } from './vehicles.js';
-import { spawnPeds, updatePeds } from './pedestrians.js';
-import { updateWanted, updateCops, wantedStars } from './police.js';
-import { ensurePlayerHeli, tryEnterHeli, exitHeli, updateHeli } from './heli.js';
-import { updateBullets, updateEnemies, tryAttack, switchWeapon, spawnEnemy } from './combat.js';
-import { startMission, updateMission, currentMission, debugCompleteMission, MISSIONS } from './missions.js';
-import { openShop, buySelected, useRespray, useSafehouse, useGarage } from './shops.js';
-import { saveGame, loadGame, hasSave } from './save.js';
-import { LANDMARKS } from './city.js';
-import { dist, clamp } from './utils.js';
-import { drawWorld } from './render.js';
-import { drawHUD, drawTitle, drawPause, drawShop, drawDialogue, drawDead, drawWin } from './hud.js';
+// main.js — Solmarina bootstrap: canvas setup, keyboard/mouse input, the
+// game loop, scene selection (?scene=heli|title|heist|map&seed=N) and the
+// window.SOL test API used by the automated play-test.
+import { createGame, update, tryEnterVehicle, exitHeli, shoot, shopBuy, doRespray, saveGame, loadGame, startMission, addWanted, say } from './game.js';
+import { renderWorld, renderHUD, renderTitle, renderPause, VW, VH } from './render.js';
+import { PLACES } from './city.js';
+import { MISSIONS } from './missions.js';
+
+const params = new URLSearchParams(location.search);
+const seed = parseInt(params.get('seed') || '1', 10) || 1;
+const scene = params.get('scene');
+const game = createGame(seed, scene);
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-ctx.imageSmoothingEnabled = false;
-initInput(canvas);
+// Off-screen 480x270 pixel buffer, upscaled nearest-neighbour.
+const buf = document.createElement('canvas');
+buf.width = VW;
+buf.height = VH;
+const bctx = buf.getContext('2d');
+bctx.imageSmoothingEnabled = false;
 
-function seedWorld() {
-  spawnTraffic(14);
-  spawnPeds(18);
-  ensurePlayerHeli();
-  G.stashes = [
-    { x: 700, y: 500, value: 300, taken: false },
-    { x: 1500, y: 1100, value: 500, taken: false },
-    { x: 2200, y: 400, value: 750, taken: false },
-    { x: 500, y: 1700, value: 400, taken: false },
-    { x: 1800, y: 1700, value: 600, taken: false },
-  ];
-  spawnPlayer(1280, 1500);
-}
-seedWorld();
-
-function nearestLandmark(maxD) {
-  let best = null, bd = maxD;
-  for (const [key, lm] of Object.entries(LANDMARKS)) {
-    const d = dist(G.player.x, G.player.y, lm.x, lm.y);
-    if (d < bd) { bd = d; best = { key, lm }; }
-  }
-  return best;
-}
-function doInteract() {
-  const p = G.player;
-  if (p.heli) { exitHeli(); return; }
-  if (p.car) { exitCar(); return; }
-  if (tryEnterHeli()) return;
-  const lm = nearestLandmark(46);
-  if (lm) {
-    if (lm.key === 'gunshop') { openShop('gun'); return; }
-    if (lm.key === 'market') { openShop('market'); return; }
-    if (lm.key === 'respray') { useRespray(); return; }
-    if (lm.key === 'safehouse') { useSafehouse(); return; }
-    if (lm.key === 'garage') { useGarage(); return; }
-  }
-  if (tryEnterCar()) return;
-  // start next mission
-  if (!G.mission && G.missionIndex < 10) { startMission(G.missionIndex); return; }
-  showMessage('Nothing to do here — find the yellow marker');
-}
-
-function updatePlay() {
-  G.time += 1;
-  G.clockMin += 0.04;
-  if (G.clockMin >= 1440) { G.clockMin -= 1440; G.day += 1; }
-  updatePlayer();
-  updateDriving();
-  updateHeli();
-  updateTraffic();
-  updatePeds();
-  updateWanted();
-  updateCops();
-  updateBullets();
-  updateEnemies();
-  updateMission();
-  for (const pop of G.popups) pop.t -= 1;
-  G.popups = G.popups.filter((x) => x.t > 0);
-  if (G.messageT > 0) G.messageT -= 1;
-  if (G.banner && G.banner.t > 0) G.banner.t -= 1;
-  if (mouse.clicked) { tryAttack(); mouse.clicked = false; }
-  if (edgePressed('f')) tryAttack();
-  if (edgePressed('1')) switchWeapon(0);
-  if (edgePressed('2')) switchWeapon(1);
-  if (edgePressed('3')) switchWeapon(2);
-  if (edgePressed('e')) doInteract();
-  if (edgePressed('b')) {
-    const lm = nearestLandmark(60);
-    if (lm && lm.key === 'gunshop') openShop('gun');
-    else if (lm && lm.key === 'market') openShop('market');
-    else showMessage('No shop nearby — look for the $ and M signs');
-  }
-  if (edgePressed('p')) saveGame();
-  if (edgePressed('m')) { G.radioOn = !G.radioOn; G.radio = (G.radio + 1) % 4; }
-  if (edgePressed('l')) G.muted = !G.muted;
-  if (edgePressed('escape')) { G.screen = 'pause'; }
-  // camera follow
-  G.cam.x = clamp(G.player.x, 240, 2560 - 240);
-  G.cam.y = clamp(G.player.y, 135, 1920 - 135);
-}
-
-function render() {
-  ctx.clearRect(0, 0, 480, 270);
-  if (G.screen === 'title') { drawTitle(ctx); return; }
-  drawWorld(ctx);
-  if (G.screen === 'play' || G.screen === 'dialogue') drawHUD(ctx);
-  if (G.screen === 'dialogue') drawDialogue(ctx);
-  else if (G.screen === 'pause') drawPause(ctx);
-  else if (G.screen === 'shop') drawShop(ctx);
-  else if (G.screen === 'dead') drawDead(ctx);
-  else if (G.screen === 'win') drawWin(ctx);
-  if (G.stagedDialogue) drawDialogue(ctx);
-}
-
-function loop() {
-  try {
-    if (G.screen === 'play') updatePlay();
-    else if (G.screen === 'title') {
-      if (edgePressed('enter')) {
-        ensureAudio();
-        if (hasSave() && G.missionsDone.length === 0) loadGame();
-        G.screen = 'play';
-        if (!G.mission && G.missionIndex < 10 && G.missionsDone.length === 0) startMission(0);
-        else if (!G.mission && G.missionIndex < 10) showMessage('Welcome back — mission ' + (G.missionIndex + 1) + ' awaits');
-      }
-    } else if (G.screen === 'dialogue') {
-      if (edgePressed('enter') || edgePressed('e')) {
-        const d = G.dialogue; G.dialogue = null;
-        G.screen = 'play';
-        if (d && d.onDone) d.onDone();
-      }
-    } else if (G.screen === 'pause') {
-      if (edgePressed('escape') || edgePressed('enter')) G.screen = 'play';
-      if (edgePressed('p')) saveGame();
-    } else if (G.screen === 'shop') {
-      if (edgePressed('escape')) { G.screen = 'play'; G.shop = null; }
-      if (edgePressed('arrowup') || edgePressed('w')) { G.shop.sel = (G.shop.sel + G.shop.items.length - 1) % G.shop.items.length; }
-      if (edgePressed('arrowdown') || edgePressed('s')) { G.shop.sel = (G.shop.sel + 1) % G.shop.items.length; }
-      if (edgePressed('enter')) buySelected();
-    } else if (G.screen === 'dead') {
-      if (edgePressed('enter')) respawn();
-    } else if (G.screen === 'win') {
-      if (edgePressed('enter')) { G.screen = 'play'; G.mission = null; }
-    }
-  } catch (err) {
-    console.error('LOOP ERROR', err && err.message);
-  }
-  render();
-  requestAnimationFrame(loop);
-}
-
-// ---------- screenshot scene staging (?scene=...) ----------
-function stageScene(scene) {
-  const q = new URLSearchParams(location.search);
-  const seed = Number(q.get('seed') || 1);
-  G.testMode = true;
-  if (scene === 'heli') {
-    G.screen = 'play';
-    G.cash = 48250; G.rep = 64; G.health = 82; G.armour = 45;
-    G.wanted = 4.6; G.day = 3; G.clockMin = 18 * 60 + 47;
-    G.weapons[2].owned = true; G.weapons[2].ammo = 120; G.weapons[1].ammo = 48; G.weapon = 2;
-    G.missionIndex = 6; G.missionsDone = [0, 1, 2, 3, 4, 5];
-    startMission(6); G.dialogue = null; G.screen = 'play';
-    const h = ensurePlayerHeli();
-    h.x = 400; h.y = 920; h.z = 62; h.angle = 0; h.speed = 3.0; h.rotor = 1;
-    G.player.heli = h; G.player.onFoot = false; G.player.x = h.x; G.player.y = h.y;
-    G.nos = 72; G.carCondition = 88;
-    updateWanted(); // spawns PD AIR-1 + cops
-    G.policeHeli = G.policeHeli || { x: 560, y: 800, z: 90, angle: 0, name: 'PD AIR-1', unit: 'AIR-1' };
-    G.banner = { text: 'MISSION 7/10 — HIGH ROLLER', sub: 'Escape the PD dragnet — lose AIR-1 over the causeway', t: 18 };
-    showMessage('AIR-1 is painting you with the searchlight — break line of sight!');
-  } else if (scene === 'title') {
-    G.screen = 'title';
-    G.missionsDone = [0, 1, 2, 3, 4]; G.cash = 12480; G.rep = 41;
-  } else if (scene === 'heist') {
-    G.screen = 'play';
-    G.cash = 8930; G.health = 76; G.armour = 60; G.wanted = 3.2; G.day = 2; G.clockMin = 21 * 60 + 5;
-    G.weapons[2].owned = true; G.weapons[2].ammo = 96; G.weapons[1].ammo = 30; G.weapon = 2;
-    G.missionIndex = 6; G.missionsDone = [0, 1, 2, 3, 4, 5];
-    startMission(6); G.dialogue = null; G.screen = 'play';
-    spawnPlayer(LANDMARKS.casino.x - 60, LANDMARKS.casino.y + 40);
-    spawnEnemy(LANDMARKS.casino.x + 20, LANDMARKS.casino.y - 10, 50, 'GUARD');
-    spawnEnemy(LANDMARKS.casino.x + 70, LANDMARKS.casino.y + 30, 50, 'GUARD');
-    spawnEnemy(LANDMARKS.casino.x - 10, LANDMARKS.casino.y + 60, 50, 'GUARD');
-    if (G.enemies[0]) G.enemies[0].hp = 22;
-    G.popups.push({ x: G.player.x + 30, y: G.player.y - 20, text: '-25', color: '#ffd23f', t: 60 });
-    G.popups.push({ x: G.player.x + 60, y: G.player.y - 30, text: '-12', color: '#ffd23f', t: 50 });
-    G.dialogue = { speaker: 'ADA KLINE', text: 'Vault\u2019s through the back, kid. Five guards between you and the money. Make it loud.', portrait: 0, onDone: null };
-    G.stagedDialogue = true;
-    updateWanted();
-  } else if (scene === 'map') {
-    G.screen = 'pause';
-    G.cash = 21400; G.rep = 52; G.day = 4; G.clockMin = 12 * 60 + 30;
-    G.missionsDone = [0, 1, 2, 3, 4, 5];
-    G.missionIndex = 6;
-    G.stats = { carsStolen: 11, copsLost: 7, kills: 19, missions: 6, shots: 214, nearMiss: 9, drift: 14, distance: 48200 };
-    G.garage = [{ name: 'Comet GT', color: '#ffc300', condition: 92 }];
-    G.stashes.forEach((s, i) => { if (i < 3) s.taken = true; });
-    G.player.x = 1130; G.player.y = 820;
-  }
-  document.documentElement.setAttribute('data-shot-ready', '1');
-}
-
-// debug / test API
-window.__solmarina = {
-  G, startMission, debugCompleteMission, saveGame, loadGame, hurtPlayer,
-  version: 'solmarina-round3',
-  state: () => ({
-    screen: G.screen, cash: G.cash, health: G.health, armour: G.armour,
-    wanted: G.wanted, missionsDone: [...G.missionsDone], missionIndex: G.missionIndex,
-    weapon: G.weapon, weapons: G.weapons.map((w) => ({ name: w.name, ammo: w.ammo, owned: w.owned })),
-    player: { x: G.player.x, y: G.player.y, onFoot: G.player.onFoot, car: !!G.player.car, heli: !!G.player.heli },
-    cops: G.cops.length, policeHeli: !!G.policeHeli, enemies: G.enemies.length,
-    stats: { ...G.stats }, hasHeli: !!G.heli,
-  }),
+const input = {
+  up: false, down: false, left: false, right: false,
+  shift: false, climb: false, descend: false,
 };
 
-const scene = new URLSearchParams(location.search).get('scene');
-if (scene) {
-  // stage after first paint so the world exists
-  requestAnimationFrame(() => requestAnimationFrame(() => stageScene(scene)));
-} else {
-  document.documentElement.setAttribute('data-shot-ready', '1');
+const KEYMAP = {
+  KeyW: 'up', ArrowUp: 'up',
+  KeyS: 'down', ArrowDown: 'down',
+  KeyA: 'left', ArrowLeft: 'left',
+  KeyD: 'right', ArrowRight: 'right',
+  ShiftLeft: 'shift', ShiftRight: 'shift',
+  Space: 'climb', KeyC: 'descend',
+};
+
+let mouseX = VW / 2, mouseY = VH / 2;
+let mouseDown = false;
+
+function worldMouse() {
+  // Buffer is scaled to the canvas CSS size; convert mouse to world coords.
+  const rect = canvas.getBoundingClientRect();
+  const sx = (mouseX / rect.width) * VW;
+  const sy = (mouseY / rect.height) * VH;
+  const camX = Math.max(0, Math.min(2400 - VW, game.cam.x - VW / 2));
+  const camY = Math.max(0, Math.min(1800 - VH, game.cam.y - VH / 2));
+  return { x: camX + sx, y: camY + sy };
 }
-requestAnimationFrame(loop);
+
+function nearPlace(pl, r = 55) {
+  return Math.hypot(game.player.x - pl.x, game.player.y - pl.y) < r;
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') e.preventDefault();
+  const k = KEYMAP[e.code];
+  if (k) input[k] = true;
+  if (e.repeat) return;
+  game.radio.ensure();
+  if (e.code === 'Enter' && game.title) {
+    game.title = false;
+    startMission(game, game.missionIndex);
+    return;
+  }
+  if (e.code === 'Escape' || e.code === 'KeyP') {
+    if (game.title) return;
+    if (game.shop) { game.shop = null; return; }
+    game.paused = !game.paused;
+    return;
+  }
+  if (game.title || game.paused) return;
+  if (e.code === 'KeyE') {
+    if (game.shop) { game.shop = null; return; }
+    if (game.player.inHeli) { exitHeli(game); return; }
+    if (nearPlace(PLACES.gunshop)) { game.shop = 'gun'; return; }
+    if (nearPlace(PLACES.market)) { game.shop = 'market'; return; }
+    if (nearPlace(PLACES.respray)) { doRespray(game); return; }
+    tryEnterVehicle(game);
+    return;
+  }
+  if (e.code === 'KeyR') { game.radio.cycle(); return; }
+  if (e.code === 'KeyM') { game.radio.toggleMute(); return; }
+  if (e.code === 'KeyS' && e.shiftKey) { saveGame(game); return; }
+  if (e.code === 'KeyL') { loadGame(game); return; }
+  if (game.shop && ['Digit1', 'Digit2', 'Digit3', 'Digit4'].includes(e.code)) {
+    shopBuy(game, parseInt(e.code.slice(-1), 10) - 1);
+    return;
+  }
+  if (e.code === 'Digit1') { game.weapon = 0; return; }
+  if (e.code === 'Digit2') { game.weapon = 1; return; }
+  if (e.code === 'Digit3') { game.weapon = 2; return; }
+});
+window.addEventListener('keyup', (e) => {
+  const k = KEYMAP[e.code];
+  if (k) input[k] = false;
+});
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  mouseX = e.clientX - rect.left;
+  mouseY = e.clientY - rect.top;
+});
+canvas.addEventListener('mousedown', (e) => {
+  mouseDown = true;
+  const rect = canvas.getBoundingClientRect();
+  mouseX = e.clientX - rect.left;
+  mouseY = e.clientY - rect.top;
+  const w = worldMouse();
+  shoot(game, w.x, w.y);
+});
+window.addEventListener('mouseup', () => { mouseDown = false; });
+window.addEventListener('blur', () => {
+  for (const k of Object.keys(input)) input[k] = false;
+  mouseDown = false;
+});
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (mouseDown && !game.title && !game.paused && !game.shop) {
+    const w = worldMouse();
+    shoot(game, w.x, w.y);
+  }
+  update(game, input, dt);
+  bctx.clearRect(0, 0, VW, VH);
+  if (game.title) {
+    renderTitle(bctx, game);
+  } else {
+    renderWorld(bctx, game);
+    renderHUD(bctx, game);
+    if (game.paused) renderPause(bctx, game);
+  }
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(buf, 0, 0, canvas.width, canvas.height);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---- test API ---------------------------------------------------------------
+window.SOL = {
+  game, input, MISSIONS, PLACES,
+  state: () => ({
+    title: game.title, paused: game.paused, shop: game.shop,
+    cash: game.cash, health: game.health, armour: game.armour, wanted: game.wanted,
+    x: game.player.x, y: game.player.y,
+    onFoot: game.player.onFoot, inHeli: game.player.inHeli,
+    vehicle: !!game.player.vehicle, heliAlt: game.heli.alt,
+    weapon: game.weapon, ammo: game.weapons.map(w => w.ammo), owned: game.weapons.map(w => w.owned),
+    missionIndex: game.missionIndex, missionStep: game.missionStep, stepCount: game.stepCount,
+    missionPassed: game.missionPassed, storyDone: game.storyDone,
+    cops: game.cops.length, policeHeli: game.policeHeli.active,
+    cars: game.cars.length, pedsAlive: game.peds.filter(p => p.alive).length,
+    rivalsAlive: game.rivals.filter(r => r.alive).length,
+    pickupsLeft: game.pickups.filter(p => !p.taken).length,
+    bullets: game.bullets.length,
+    stats: { ...game.stats },
+    stashesTaken: game.stashes.filter(s => s.taken).length,
+    wasted: game.wasted, dialogue: game.dialogue.length,
+    radio: game.radio.name(),
+  }),
+  step: () => {
+    const m = MISSIONS[game.missionIndex];
+    return m ? m.steps[game.missionStep] : null;
+  },
+  teleport: (x, y) => {
+    if (game.player.vehicle) { game.player.vehicle.x = x; game.player.vehicle.y = y; }
+    if (game.player.inHeli) { game.heli.x = x; game.heli.y = y; }
+    game.player.x = x; game.player.y = y;
+    game.cam.x = x; game.cam.y = y;
+  },
+  setWanted: (n) => { game.wanted = n; game.crimeT = 0; },
+  giveCash: (n) => { game.cash += n; },
+  startMission: (i) => startMission(game, i),
+  enterVehicle: () => tryEnterVehicle(game),
+  exitHeli: () => exitHeli(game),
+  shootAt: (x, y) => shoot(game, x, y),
+  buy: (i) => shopBuy(game, i),
+  respray: () => doRespray(game),
+  save: () => saveGame(game),
+  load: () => loadGame(game),
+  addWanted: (n) => addWanted(game, n),
+  say: (s, t) => say(game, s, t),
+  openShop: (kind) => { game.shop = kind; },
+  closeShop: () => { game.shop = null; },
+  setPaused: (v) => { game.paused = v; },
+  setTitle: (v) => { game.title = v; },
+  key: (code, down) => {
+    const ev = new KeyboardEvent(down ? 'keydown' : 'keyup', { code, bubbles: true });
+    window.dispatchEvent(ev);
+  },
+  clickAt: (x, y) => {
+    const w = { x, y };
+    shoot(game, w.x, w.y);
+  },
+};
