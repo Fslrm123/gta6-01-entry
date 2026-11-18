@@ -1,50 +1,37 @@
-// save.js — save and load for Solmarina, kept in localStorage under one
-// key. Saves cash, health, armor, weapons, mission progress, position and
-// lifetime stats. Never touches anything else.
+// save.js — localStorage save/load. Freshly authored.
+import { G } from './state.js';
+import { showMessage } from './player.js';
+export const SAVE_KEY = 'solmarina-save-v3';
 
-const KEY = 'solmarina-save-v1';
-
-export function saveGame(game) {
+export function saveGame() {
   try {
-    const p = game.player;
     const data = {
-      version: 1,
-      cash: p.cash,
-      health: p.health,
-      armor: p.armor,
-      weapon: p.weapon,
-      ammo: p.ammo,
-      x: p.x, y: p.y,
-      missionIndex: game.missions.index,
-      kills: p.kills,
-      carsStolen: p.carsStolen,
-      missionsDone: p.missionsDone,
-      wanted: game.wanted,
-      savedAt: Date.now(),
+      cash: G.cash, rep: G.rep, health: G.health, armour: G.armour,
+      day: G.day, clockMin: G.clockMin, weapons: G.weapons,
+      missionsDone: G.missionsDone, missionIndex: G.missionIndex,
+      stats: G.stats, garage: G.garage,
+      px: G.player.x, py: G.player.y,
+      stashesTaken: G.stashes.filter((s) => s.taken).length,
     };
-    localStorage.setItem(KEY, JSON.stringify(data));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    showMessage('Progress saved — Day ' + G.day);
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
-
 export function loadGame() {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (data.version !== 1) return null;
-    return data;
-  } catch {
-    return null;
-  }
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const d = JSON.parse(raw);
+    G.cash = d.cash; G.rep = d.rep; G.health = d.health; G.armour = d.armour;
+    G.day = d.day; G.clockMin = d.clockMin; G.weapons = d.weapons;
+    G.missionsDone = d.missionsDone; G.missionIndex = d.missionIndex;
+    G.stats = d.stats; G.garage = d.garage || [];
+    G.player.x = d.px; G.player.y = d.py;
+    G.mission = null;
+    return true;
+  } catch { return false; }
 }
-
 export function hasSave() {
-  return loadGame() !== null;
-}
-
-export function clearSave() {
-  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+  try { return !!localStorage.getItem(SAVE_KEY); } catch { return false; }
 }

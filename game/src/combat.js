@@ -1,190 +1,97 @@
-// combat.js — shooting, punching, explosions and pickups. Bullets are
-// hitscan with a tracer line and a muzzle flash; cars and helicopters
-// explode when their health hits zero; health, armor and weapon pickups
-// sit around the city. Ground fire cannot reach a helicopter flying high.
+// combat.js — punch / shoot, bullets, enemies, weapon switching. Freshly authored.
+import { G } from './state.js';
+import { dist, rand } from './utils.js';
+import { mouse } from './input.js';
+import { addPopup } from './player.js';
+import { addWanted } from './police.js';
+import { sfx } from './audio.js';
 
-import { dist, clamp } from './utils.js';
-import { WORLD_W, WORLD_H, BEACH_Y } from './city.js';
-
-export class Combat {
-  constructor(game) {
-    this.game = game;
-    this.tracers = []; // {x1,y1,x2,y2,life}
-    this.pickups = [];
-    this.spawnPickups();
-  }
-
-  spawnPickups() {
-    const spots = [
-      { kind: 'health', x: 1300, y: 980 }, // hospital
-      { kind: 'health', x: 2100, y: 1980 }, // diner
-      { kind: 'armor', x: 3500, y: 2980 }, // gun shop
-      { kind: 'pistol', x: 3550, y: 2940 },
-      { kind: 'smg', x: 4780, y: 2700 }, // harbour
-      { kind: 'health', x: 900, y: 1560 }, // park
-      { kind: 'armor', x: 2600, y: 3940 }, // pier
-      { kind: 'pistol', x: 700, y: 3360 }, // safehouse
-      { kind: 'health', x: 1700, y: 1160 }, // coastal market
-      { kind: 'armor', x: 4620, y: 2340 }, // helipad
-    ];
-    for (const s of spots) this.pickups.push({ ...s, bob: Math.random() * 6 });
-  }
-
-  // The player's attack: fists hit what's close, guns hitscan to the aim.
-  playerAttack(player) {
-    const game = this.game;
-    const w = player.weaponDef;
-    const aimX = player.x + Math.cos(player.angle) * w.range;
-    const aimY = player.y + Math.sin(player.angle) * w.range;
-    game.sound.gunshot?.();
-    if (player.weapon === 'fists') {
-      game.sound.punch();
-      // Hit the nearest ped / officer / enemy in front of the player.
-      const hit = this.nearestTarget(player.x + Math.cos(player.angle) * 30, player.y + Math.sin(player.angle) * 30, 46);
-      if (hit) this.damageTarget(hit, w.damage, player);
-      return;
+export function aimAngle() {
+  // mouse is in 480x270 screen space; world aim from player screen pos
+  const px = 240, py = 135;
+  return Math.atan2(mouse.y - py, mouse.x - px);
+}
+export function switchWeapon(i) {
+  if (G.weapons[i] && G.weapons[i].owned) { G.weapon = i; }
+}
+export function tryAttack() {
+  const p = G.player;
+  const w = G.weapons[G.weapon];
+  if (!w) return;
+  if (G.weapon === 0) {
+    sfx.punch();
+    const a = p.onFoot ? aimAngle() : p.angle;
+    const hx = p.x + Math.cos(a) * 26, hy = p.y + Math.sin(a) * 26;
+    for (const e of G.enemies) {
+      if (e.hp > 0 && dist(hx, hy, e.x, e.y) < 22) damageEnemy(e, 15);
     }
-    // Gun: hitscan along the aim line; the nearest thing in the cone takes it.
-    const end = { x: aimX, y: aimY };
-    const hit = this.raycast(player.x, player.y, player.angle, w.range);
-    if (hit) {
-      end.x = hit.x; end.y = hit.y;
-      this.damageTarget(hit.target, w.damage, player);
+    for (const ped of G.peds) {
+      if (dist(hx, hy, ped.x, ped.y) < 18) { ped.panic = 120; addWanted(0.5, 'assault'); }
     }
-    this.tracers.push({ x1: player.x, y1: player.y, x2: end.x, y2: end.y, life: 0.12 });
-    game.addParticles(player.x + Math.cos(player.angle) * 26, player.y + Math.sin(player.angle) * 26, 4, '#ffd76e');
-    game.crowd.scareAll(player.x, player.y, 500);
-    game.police.addWanted(game, 0.4, 'Shots fired');
+    return;
   }
-
-  // Find the closest hittable thing along a ray (peds, officers, enemies,
-  // cars, helicopters). A helicopter at cruising altitude is out of reach
-  // of ground fire, so its cone check is skipped when it flies high.
-  raycast(x, y, angle, range) {
-    let best = null; let bd = range;
-    const consider = (tx, ty, target) => {
-      const dx = tx - x; const dy = ty - y;
-      const along = dx * Math.cos(angle) + dy * Math.sin(angle);
-      if (along < 0 || along > bd) return;
-      const perp = Math.abs(-dx * Math.sin(angle) + dy * Math.cos(angle));
-      if (perp < 26) { bd = along; best = { x: tx, y: ty, target }; }
-    };
-    for (const p of this.game.crowd.peds) if (!p.dead) consider(p.x, p.y, { kind: 'ped', ref: p });
-    for (const o of this.game.police.officers) consider(o.x, o.y, { kind: 'officer', ref: o });
-    for (const e of this.game.missions.enemies) if (!e.dead) consider(e.x, e.y, { kind: 'enemy', ref: e });
-    for (const c of this.game.traffic.cars) {
-      if (c.dead || c.kind === 'player') continue;
-      consider(c.x, c.y, { kind: 'car', ref: c });
-    }
-    for (const c of this.game.police.cruisers) if (!c.dead) consider(c.x, c.y, { kind: 'car', ref: c });
-    for (const h of this.game.helis) {
-      if (h.dead || h.kind === 'player') continue;
-      if (h.alt > 0.4) continue; // too high for a street gun
-      consider(h.x, h.y, { kind: 'heli', ref: h });
-    }
-    for (const h of this.game.police.helis) {
-      if (h.dead || h.alt > 0.4) continue;
-      consider(h.x, h.y, { kind: 'heli', ref: h });
-    }
-    return best;
+  if (w.ammo <= 0) { sfx.error(); return; }
+  w.ammo -= 1; G.stats.shots += 1; sfx.shoot();
+  const a = p.onFoot ? aimAngle() : p.angle;
+  const spread = G.weapon === 2 ? 0.12 : 0.04;
+  G.bullets.push({
+    x: p.x + Math.cos(a) * 16, y: p.y + Math.sin(a) * 16,
+    vx: Math.cos(a + rand(-spread, spread)) * 11, vy: Math.sin(a + rand(-spread, spread)) * 11,
+    dmg: G.weapon === 2 ? 12 : 25, life: 50, fromPlayer: true,
+  });
+}
+export function damageEnemy(e, dmg) {
+  e.hp -= dmg;
+  addPopup(e.x, e.y - 16, '-' + dmg, '#ffd23f');
+  if (e.hp <= 0) {
+    e.dead = true; G.stats.kills += 1;
+    addPopup(e.x, e.y - 20, 'DOWN +$25', '#7CFC00');
+    G.cash += 25;
+    addWanted(0.5, 'shooting');
   }
-
-  nearestTarget(x, y, range) {
-    let best = null; let bd = range;
-    const consider = (tx, ty, target) => {
-      const d = dist(x, y, tx, ty);
-      if (d < bd) { bd = d; best = target; }
-    };
-    for (const p of this.game.crowd.peds) if (!p.dead) consider(p.x, p.y, { kind: 'ped', ref: p });
-    for (const o of this.game.police.officers) consider(o.x, o.y, { kind: 'officer', ref: o });
-    for (const e of this.game.missions.enemies) if (!e.dead) consider(e.x, e.y, { kind: 'enemy', ref: e });
-    return best;
-  }
-
-  damageTarget(target, dmg, player) {
-    const game = this.game;
-    if (target.kind === 'ped') {
-      const p = target.ref;
-      p.health -= dmg;
-      if (p.health <= 0) {
-        p.dead = true;
-        player.kills++;
-        game.addCash(p.cash, `Took $${p.cash} from ${p.name}`);
-        game.police.addWanted(game, 1, 'Assault on a civilian');
-      } else {
-        p.scareFrom(player.x, player.y);
+}
+export function spawnEnemy(x, y, hp = 50, label = 'THUG') {
+  const e = { x, y, hp, maxHp: hp, label, angle: 0, speed: 0.9, dead: false, shootT: rand(40, 120) };
+  G.enemies.push(e);
+  return e;
+}
+export function updateBullets() {
+  for (const b of G.bullets) {
+    b.x += b.vx; b.y += b.vy; b.life -= 1;
+    if (b.fromPlayer) {
+      for (const e of G.enemies) {
+        if (!e.dead && dist(b.x, b.y, e.x, e.y) < 12) { damageEnemy(e, b.dmg); b.life = 0; break; }
       }
-    } else if (target.kind === 'officer') {
-      const o = target.ref;
-      o.health -= dmg;
-      if (o.health <= 0) {
-        game.police.addWanted(game, 1, 'Officer down');
-        player.kills++;
+      for (const cop of G.cops) {
+        if (dist(b.x, b.y, cop.x, cop.y) < 14) { b.life = 0; addWanted(1, 'shot at police'); break; }
       }
-    } else if (target.kind === 'enemy') {
-      const e = target.ref;
-      e.health -= dmg;
-      if (e.health <= 0) {
-        e.dead = true;
-        player.kills++;
-        game.missions.onEnemyDown(e);
-      }
-    } else if (target.kind === 'car') {
-      const c = target.ref;
-      c.health -= dmg;
-      game.addParticles(c.x, c.y, 6, '#ff9a3c');
-      if (c.health <= 0 && !c.dead) {
-        c.dead = true;
-        game.explode(c.x, c.y);
-        game.police.addWanted(game, 1, 'Vehicle destroyed');
-      }
-    } else if (target.kind === 'heli') {
-      const h = target.ref;
-      const dead = h.damage(dmg);
-      game.addParticles(h.x, h.y, 6, '#ff9a3c');
-      if (dead) {
-        game.explode(h.x, h.y);
-        game.police.addWanted(game, 1, 'Helicopter down');
+    } else {
+      const p = G.player;
+      if (dist(b.x, b.y, p.x, p.y) < 10) {
+        b.life = 0;
+        if (G.armour > 0) G.armour = Math.max(0, G.armour - b.dmg);
+        else G.health = Math.max(0, G.health - b.dmg);
+        if (G.health <= 0) { G.screen = 'dead'; }
       }
     }
   }
-
-  // Explode at a point: particles, shake, sound, splash damage.
-  explodeAt(x, y) {
-    const game = this.game;
-    game.addParticles(x, y, 42, '#ff7a1a');
-    game.addParticles(x, y, 26, '#3a3a3a');
-    game.addParticles(x, y, 16, '#ffd76e');
-    game.addShake(10);
-    game.sound.explosion();
-    game.crowd.scareAll(x, y, 700);
-    const player = game.player;
-    const d = dist(x, y, player.x, player.y);
-    if (d < 130 && !player.inCar && !player.inHeli) player.damage(45);
-    if (d < 130 && player.inCar) player.car.health -= 40;
-    if (d < 130 && player.inHeli) player.heli.health -= 40;
-    for (const c of game.traffic.cars) {
-      if (!c.dead && dist(x, y, c.x, c.y) < 110) { c.health -= 60; if (c.health <= 0) c.dead = true; }
+  G.bullets = G.bullets.filter((b) => b.life > 0);
+}
+export function updateEnemies() {
+  const p = G.player;
+  for (const e of G.enemies) {
+    if (e.dead) continue;
+    const d = dist(e.x, e.y, p.x, p.y);
+    e.angle = Math.atan2(p.y - e.y, p.x - e.x);
+    if (d > 130) { e.x += Math.cos(e.angle) * e.speed; e.y += Math.sin(e.angle) * e.speed; }
+    else if (d < 40) { e.x -= Math.cos(e.angle) * e.speed; e.y -= Math.sin(e.angle) * e.speed; }
+    e.shootT -= 1;
+    if (e.shootT <= 0 && d < 260) {
+      e.shootT = rand(70, 140);
+      const a = e.angle + rand(-0.1, 0.1);
+      G.bullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 7, vy: Math.sin(a) * 7, dmg: 6, life: 60, fromPlayer: false });
+      sfx.shoot();
     }
   }
-
-  update(dt) {
-    for (const t of this.tracers) t.life -= dt;
-    this.tracers = this.tracers.filter((t) => t.life > 0);
-    // Pickup collection.
-    const player = this.game.player;
-    for (const p of this.pickups) {
-      p.bob += dt * 3;
-      if (player.inCar || player.inHeli) continue;
-      if (dist(player.x, player.y, p.x, p.y) < 44) {
-        if (p.kind === 'health') { player.heal(50); this.game.notify('Health +50', 'good'); }
-        if (p.kind === 'armor') { player.armor = clamp(player.armor + 50, 0, 100); this.game.notify('Armor +50', 'good'); }
-        if (p.kind === 'pistol') { player.giveWeapon('pistol', 60); this.game.notify('Picked up a Pistol', 'good'); }
-        if (p.kind === 'smg') { player.giveWeapon('smg', 120); this.game.notify('Picked up a Street SMG', 'good'); }
-        this.game.sound.pickup();
-        p.taken = true;
-      }
-    }
-    this.pickups = this.pickups.filter((p) => !p.taken);
-  }
+  G.enemies = G.enemies.filter((e) => !e.dead || e._keep);
 }

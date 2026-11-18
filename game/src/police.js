@@ -1,197 +1,87 @@
-// police.js — the Solmarina PD and the wanted system. Crimes raise the
-// wanted level (1–5 stars); cruisers chase and nudge, officers on foot
-// chase and punch. Lose the heat by staying out of sight, hiding, or paying
-// for a respray at the Sunset Spray Shop. At 4 stars and up the PD sends a
-// helicopter after you. The rams are deliberately soft now: a cruiser taps
-// your car and shoves it instead of shredding it, so a new player gets a
-// chance to learn the chase before getting busted.
+// police.js — wanted system, cop cars, officers, roadblocks, police heli. Freshly authored.
+import { G } from './state.js';
+import { clamp, dist, rand, angDiff, pick } from './utils.js';
+import { makeCar } from './vehicles.js';
+import { hurtPlayer, addPopup, showMessage } from './player.js';
+import { sfx } from './audio.js';
 
-import { clamp, dist, turnToward, mulberry32 } from './utils.js';
-import { Car, CAR_TYPES } from './vehicles.js';
-import { Heli, updatePoliceHeli } from './heli.js';
-import { WORLD_W, WORLD_H, BEACH_Y, randomRoadPoint } from './city.js';
-
-export const WANTED_LABELS = [
-  'Clean', 'Petty theft', 'Grand theft', 'Assault', 'Armed & dangerous', 'Citywide manhunt',
-];
-
-export class Police {
-  constructor() {
-    this.cruisers = [];
-    this.officers = [];
-    this.helis = []; // police helicopters, wanted 4+
-    this.rng = mulberry32(99);
-    this.calmTimer = 0; // seconds without a crime
-    this.bustProgress = 0; // 0..1 while an officer holds the player
+const UNIT_NAMES = ['UNIT 12', 'UNIT 27', 'UNIT 04', 'UNIT 31', 'UNIT 58', 'UNIT 09'];
+export function wantedStars() { return Math.floor(G.wanted + 0.0001); }
+export function addWanted(n, why) {
+  G.wanted = clamp(G.wanted + n, 0, 5);
+  if (n > 0) showMessage('Wanted level rising' + (why ? ' — ' + why : ''));
+}
+export function updateWanted(dt) {
+  // decay slowly when no crime recently
+  if (G.wanted > 0 && Math.random() < 0.0012) G.wanted = Math.max(0, G.wanted - 0.05);
+  const stars = wantedStars();
+  const wantCops = stars === 0 ? 0 : stars <= 1 ? 1 : stars <= 2 ? 2 : stars <= 3 ? 3 : 4;
+  while (G.cops.length < wantCops) spawnCop();
+  while (G.cops.length > wantCops) G.cops.pop();
+  // police heli at wanted >= 4
+  if (stars >= 4 && !G.policeHeli) {
+    G.policeHeli = { x: G.player.x + 160, y: G.player.y - 200, z: 90, angle: 0, name: 'PD AIR-1', unit: 'AIR-1' };
+    showMessage('PD AIR-1 helicopter is on you — lose the heat!');
+    sfx.siren();
   }
-
-  // How many cruisers / officers / helis a wanted level fields.
-  static unitsFor(level) {
-    return {
-      cruisers: level === 0 ? 0 : Math.min(1 + Math.floor(level / 2), 4),
-      officers: level >= 2 ? Math.min(level - 1, 4) : 0,
-      helis: level >= 4 ? 1 : 0,
-    };
-  }
-
-  // Crimes raise the heat. The level stays a whole number of stars: the
-  // HUD looks the label up by index, and the Heat Wave mission waits for
-  // exactly 0 — a fractional level would show as "undefined" up top and
-  // could never cool back to zero.
-  addWanted(game, amount, reason) {
-    const p = game.player;
-    if (p.wasted || p.busted) return;
-    const before = game.wanted;
-    const raised = Math.round(game.wanted + amount);
-    game.wanted = clamp(raised, 0, 5);
-    this.calmTimer = 0;
-    if (game.wanted > before) game.notify(`Wanted level ${game.wanted} — ${reason}`, 'bad');
-  }
-
-  update(dt, game) {
-    const player = game.player;
-    const level = game.wanted;
-    const want = Police.unitsFor(level);
-
-    // Spawn cruisers just off-screen, on a road near the player.
-    while (this.cruisers.length < want.cruisers) {
-      const p = randomRoadPoint(this.rng, player, 900);
-      const cruiser = new Car(p.x, p.y, 0, CAR_TYPES[1], '#1c2733', 'police');
-      cruiser.speed = 200;
-      this.cruisers.push(cruiser);
-    }
-    // Spawn officers on foot near the player.
-    while (this.officers.length < want.officers) {
-      const a = this.rng() * Math.PI * 2;
-      const off = new Officer(player.x + Math.cos(a) * 420, player.y + Math.sin(a) * 420);
-      this.officers.push(off);
-    }
-    // Spawn the police heli once the heat hits 4 stars.
-    while (this.helis.length < want.helis) {
-      const a = this.rng() * Math.PI * 2;
-      const heli = new Heli(player.x + Math.cos(a) * 700, player.y + Math.sin(a) * 700, 0, 'police-heli');
-      heli.alt = 0.9;
-      heli.speed = 300;
-      this.helis.push(heli);
-    }
-    // Remove extras when the heat drops.
-    while (this.cruisers.length > want.cruisers) this.cruisers.pop();
-    while (this.officers.length > want.officers) this.officers.pop();
-    while (this.helis.length > want.helis) this.helis.pop();
-
-    // Cruiser chase: steer toward the player and tap, not shred.
-    for (const c of this.cruisers) {
-      const targetAngle = Math.atan2(player.y - c.y, player.x - c.x);
-      const d = dist(c.x, c.y, player.x, player.y);
-      const steer = clamp(((targetAngle - c.angle + Math.PI * 3) % (Math.PI * 2) - Math.PI) * 1.4, -1, 1);
-      const throttle = d > 60 ? 1 : 0.4;
-      c.drive(throttle, steer, dt);
-      // Soft ram: a slow tap shoves the player's car aside; only a fast
-      // slam chips its health, and far less than it used to.
-      if (d < 56) {
-        if (player.inCar) {
-          if (Math.abs(c.speed) > 140) {
-            player.car.health -= 7 * dt * 4;
-            game.addShake(2);
-          } else {
-            // Nudge: push the player's car gently off its line.
-            const push = 26 * dt;
-            player.car.x += Math.cos(c.angle) * push;
-            player.car.y += Math.sin(c.angle) * push;
-          }
-        } else if (player.hurtCd <= 0) {
-          player.damage(5);
-          game.addShake(3);
-        }
-      }
-      if (c.health <= 0) c.dead = true;
-      if (c.dead) game.explode(c.x, c.y);
-    }
-    this.cruisers = this.cruisers.filter((c) => !c.dead && dist(c.x, c.y, player.x, player.y) < 3200);
-
-    // Officers chase on foot and try to bust the player.
-    for (const o of this.officers) {
-      o.update(dt, player, game);
-    }
-    this.officers = this.officers.filter((o) => o.health > 0 && dist(o.x, o.y, player.x, player.y) < 2600);
-
-    // The police heli keeps pace overhead and fires in bursts.
-    for (const h of this.helis) {
-      updatePoliceHeli(h, dt, game);
-      if (h.dead) game.explode(h.x, h.y);
-    }
-    this.helis = this.helis.filter((h) => !h.dead && dist(h.x, h.y, player.x, player.y) < 3600);
-
-    // Wanted decays after a long quiet stretch with no police nearby.
-    if (level > 0) {
-      this.calmTimer += dt;
-      const nearestCop = Math.min(
-        ...this.cruisers.map((c) => dist(c.x, c.y, player.x, player.y)),
-        ...this.officers.map((o) => dist(o.x, o.y, player.x, player.y)),
-        ...this.helis.map((h) => dist(h.x, h.y, player.x, player.y)),
-        Infinity,
-      );
-      if (this.calmTimer > 26 && nearestCop > 700) {
-        game.wanted = level - 1;
-        this.calmTimer = 0;
-        game.notify(`Heat cooling off — wanted level ${game.wanted}`, 'good');
-      }
-    } else {
-      this.calmTimer = 0;
-    }
-
-    // Busted: an officer holds the player for 3.5 s (slower than before,
-    // so a new player can still break free by running).
-    if (this.bustProgress > 0 && !player.inCar && !player.inHeli) {
-      this.bustProgress += dt / 3.5;
-      if (this.bustProgress >= 1) {
-        player.busted = true;
-        game.onBusted();
-      }
-    } else {
-      this.bustProgress = Math.max(0, this.bustProgress - dt / 2);
-    }
-  }
-
-  clearAll() {
-    this.cruisers = [];
-    this.officers = [];
-    this.helis = [];
-    this.bustProgress = 0;
+  if (stars < 4 && G.policeHeli) { G.policeHeli = null; G.stats.copsLost += 1; }
+  if (G.policeHeli) {
+    const h = G.policeHeli;
+    const a = Math.atan2(G.player.y - h.y, G.player.x - h.x);
+    h.angle += angDiff(h.angle, a) * 0.03;
+    h.x += Math.cos(h.angle) * 1.8; h.y += Math.sin(h.angle) * 1.8;
+    h.z = 90 + Math.sin(G.time / 30) * 6;
   }
 }
-
-class Officer {
-  constructor(x, y) {
-    this.x = x;
-    this.y = y;
-    this.angle = 0;
-    this.health = 60;
-    this.speed = 175;
-    this.punchCd = 0;
-    this.runPhase = Math.random() * 6;
-  }
-
-  update(dt, player, game) {
-    this.punchCd = Math.max(0, this.punchCd - dt);
-    const d = dist(this.x, this.y, player.x, player.y);
-    const ang = Math.atan2(player.y - this.y, player.x - this.x);
-    this.angle = ang;
-    this.runPhase += dt * 10;
-    if (player.inCar || player.inHeli) {
-      // On foot they cannot catch a car or a heli: fall back and wait.
-      return;
+function spawnCop() {
+  const p = G.player;
+  const a = rand(0, Math.PI * 2);
+  const x = clamp(p.x + Math.cos(a) * 260, 300, 2500);
+  const y = clamp(p.y + Math.sin(a) * 200, 40, 1880);
+  const car = makeCar(x, y, 0, { color: '#1a1a2e', name: 'Interceptor', police: true, driver: true });
+  car.unit = pick(UNIT_NAMES);
+  G.cops.push(car);
+}
+export function updateCops() {
+  const p = G.player;
+  for (const cop of G.cops) {
+    const d = dist(cop.x, cop.y, p.x, p.y);
+    const a = Math.atan2(p.y - cop.y, p.x - cop.x);
+    cop.angle += angDiff(cop.angle, a) * 0.06;
+    const sp = d > 260 ? 4.6 : d > 90 ? 3.6 : 1.6;
+    cop.speed = sp;
+    cop.x += Math.cos(cop.angle) * sp;
+    cop.y += Math.sin(cop.angle) * sp;
+    // ramming: damage player on contact (with cooldown so it is survivable)
+    if (d < 26) {
+      cop.speed *= 0.4;
+      cop._ramT = (cop._ramT || 0) - 1;
+      if (cop._ramT <= 0) {
+        cop._ramT = 45;
+        if (p.onFoot) hurtPlayer(4);
+        else if (p.car) { p.car.condition = Math.max(0, p.car.condition - 1.5); if (Math.random() < 0.05) addPopup(p.x, p.y - 14, 'RAMMED!', '#e63946'); }
+        if (Math.random() < 0.5) sfx.punch();
+      }
     }
-    if (d > 34) {
-      this.x += Math.cos(ang) * this.speed * dt;
-      this.y += Math.sin(ang) * this.speed * dt;
-    } else if (this.punchCd <= 0) {
-      this.punchCd = 0.8;
-      player.damage(7);
-      game.addShake(3);
-      game.sound.hurt();
-    }
-    // Holding the player: if very close for a while, the bust begins.
-    if (d < 30) game.police.bustProgress += dt / 4;
   }
+  // bust: on foot, cop very close for a while at high wanted
+  if (wantedStars() >= 3 && p.onFoot) {
+    for (const cop of G.cops) {
+      if (dist(cop.x, cop.y, p.x, p.y) < 20 && Math.random() < 0.01) {
+        G.cash = Math.max(0, G.cash - 100);
+        G.wanted = 0; G.cops = []; G.policeHeli = null;
+        showMessage('BUSTED! $100 fine — the crew bailed you out');
+        p.x = 420; p.y = 1420;
+      }
+    }
+  }
+}
+export function clearHeat() {
+  G.wanted = 0; G.cops = []; G.policeHeli = null; G.stats.copsLost += 1;
+  showMessage('Heat cleared — you are clean, for now');
+}
+export function policePanel() {
+  const units = G.cops.map((c) => ({ unit: c.unit || 'UNIT', d: Math.round(dist(c.x, c.y, G.player.x, G.player.y)) }));
+  if (G.policeHeli) units.unshift({ unit: 'AIR-1', d: Math.round(dist(G.policeHeli.x, G.policeHeli.y, G.player.x, G.player.y)) });
+  return units.slice(0, 4);
 }
